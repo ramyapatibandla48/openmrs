@@ -1,0 +1,134 @@
+---
+- name: openRMS application
+  become: yes
+  hosts: webserver
+  vars:
+    - username: tomcat
+    - home_dir: /opt/tomcat
+    - tomcat_version: 7.0.109
+    - default_shell: /bin/false
+    - tomcat_service_location: /etc/systemd/system/tomcat.service
+  tasks:
+    - name: To update and manage packages 
+      apt:
+        update_cache: true
+        cache_valid_time: 3600
+        force_apt_get: true
+
+    - name: install java8 on ubuntu 
+      apt:
+        name: openjdk-8-jdk
+        state: present
+
+    - name: Installing mysql
+      package:
+        name: "{{ item }}"
+        state: present
+        update_cache: yes
+      loop:
+          - mysql-server
+          - python3-mysqldb
+
+    - name: Adding group  for tomcat
+      ansible.builtin.group:
+          name: "{{ username }}"
+          state: present
+
+    - name: Adding user  for tomcat
+      ansible.builtin.user:
+        create_home: yes
+        name: "{{ username }}"
+        group: "{{ username }}"
+        home: "{{ home_dir }}"
+        shell: "{{ default_shell }}"
+        state: present
+
+    - name: download the Tomcat 7
+      get_url:
+        url: "https://archive.apache.org/dist/tomcat/tomcat-7/v{{ tomcat_version }}/bin/apache-tomcat-{{ tomcat_version }}.tar.gz"
+        dest: "/tmp/apache-tomcat-{{ tomcat_version }}.tar.gz"
+
+    - name: creating adirectory 
+      file:
+        path: "{{ home_dir }}"
+        state: directory
+         
+    - name: Extracting Apache Tomcat.
+      ansible.builtin.unarchive:
+        src: "/tmp/apache-tomcat-{{ tomcat_version }}.tar.gz"
+        dest: /tmp
+        group: "{{ username }}"
+        owner: "{{ username }}"
+        remote_src: yes
+    
+    - name: Coping tomcat files to home directory
+      ansible.builtin.copy:
+        src: /tmp/apache-tomcat-{{ tomcat_version }}/
+        dest: /opt/tomcat/
+        remote_src: yes 
+        
+    - name: giving permisssions and ownership 
+      ansible.builtin.file:
+        path: "{{ home_dir }}"
+        group: "{{ username }}"
+        owner: "{{ username }}"
+        recurse: yes
+        state: directory
+
+    - name: giving permisssions 
+      ansible.builtin.file:
+        path: "{{ item }}"
+        mode: 'g+r+x'
+        recurse: yes
+      with_items:
+        - webapps
+        - work
+        - temp
+        - logs
+        - conf
+
+    - name: copy the tomcat service file
+      ansible.builtin.template:
+        src: 'tomcat.service.j2'
+        dest: "{{ tomcat_service_location }}"
+      notify: 
+        -  reload the daemon, enable and start the tomcat service
+      
+    - name: create a directory for OpenMRS
+      ansible.builtin.file: 
+        path: /var/lib/OpenMRS
+        state: directory
+
+    - name: changing permissions to tomcat for openmrs
+      ansible.builtin.file:
+        path: /var/lib/OpenMRS
+        group: "{{ username }}"
+        owner: "{{ username }}"
+        recurse: yes
+
+    - name: download the openmrs
+      get_url:
+        url: " https://sourceforge.net/projects/openmrs/files/releases/OpenMRS_Platform_2.5.0/openmrs.war "
+        dest: "/tmp"
+
+    - name: copy the downloaded file to the Tomcat webapps directory
+      ansible.builtin.copy:
+        src: /tmp/openmrs.war
+        dest: /opt/tomcat/webapps/
+        remote_src: yes 
+
+    - name: change the ownership of the openmrs.war file to tomcat
+      ansible.builtin.file:
+        path: /opt/tomcat/webapps/openmrs.war
+        owner: "{{ username }}"
+        group: "{{ username }}"
+       
+
+  handlers:
+    - name: reload the daemon, enable and start the tomcat service
+      ansible.builtin.systemd:
+        name: 'tomcat.service'
+        daemon_reload: yes
+        enabled: yes
+        state: restarted
+
